@@ -1,4 +1,5 @@
-import { User } from "../models/User.js";
+import User from "../models/User.js";
+// import Admin  from "../models/Admin.js";
 import { Comment } from "../models/Comment.js";
 import { Recipe } from "../models/Recipe.js";
 import bcrypt from "bcryptjs";
@@ -16,30 +17,69 @@ const generateRefreshToken = (id, role) => {
   });
 };
 
-// POST /api/user/signup
+// POST /api/User/signup
 export const signupUser = async (req, res) => {
   try {
-    const { username, email, password } = req.body;
+    let { username, email, mobile, password, confirmPassword } = req.body;
+    username = username?.trim();
+    email = email?.trim();
+    mobile = String(mobile ?? "").trim().replace(/[\s-]/g, "");
+    password = password?.trim();
+    confirmPassword = confirmPassword?.trim();
 
-    if (!username || !email || !password) {
-      return res
-        .status(400)
-        .json({ error: "Failed", message: "All fields are required" });
+
+    if (!username || !email || !mobile || !password || !confirmPassword) {
+      return res.status(401).json({ error: "Failed", message: "Empty input failed" });
+    }
+    if (!/^[a-zA-Z]*$/.test(username)) {
+      return res.status(401).json({ error: "Failed", message: "Failed username format" });
+    }
+    if (!/^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$/.test(email)) {
+      return res.status(401).json({ error: "Failed", message: "Failed email format" });
+    }
+    if (/^\+91[6-9]\d{9}$/.test(mobile)) {
+      mobile = mobile.slice(3);
+    } else if (/^91[6-9]\d{9}$/.test(mobile)) {
+      mobile = mobile.slice(2);
+    } else if (!/^[6-9]\d{9}$/.test(mobile)) {
+      return res.status(401).json({
+        error: "failed",
+        message: "Failed mobile number format."
+      });
+    }
+    if (password.length < 8) {
+      return res.status(401).json({ error: "Failed", message: "Failed password format" });
+    }
+    if (confirmPassword.length < 8) {
+      return res.status(401).json({ error: "Failed", message: "Failed password format" });
+    }
+    if (confirmPassword != password) {
+      return res.status(401).json({ error: "Failed", message: "Password not matched." })
+    }
+    if (password.length < 8) {
+      return res.status(401).json({ error: "Failed", message: "Failed password format" });
     }
 
-    const existing = await User.findOne({ $or: [{ username }, { email }] });
-    if (existing) {
-      return res
-        .status(409)
-        .json({ error: "Failed", message: "Username or email already in use" });
+    // Check if alredy exsits
+
+    const existingUser = await User.findOne({ email }, { username });
+    if (existingUser) {
+      return res.status(409).json({ error: "Failed", message: "User with the provided email already exists" })
     }
 
     const hashedPassword = await bcrypt.hash(password, 10);
-    const user = new User({ username, email, password: hashedPassword });
-    await user.save();
+    const newUsers = new User({
+      username,
+      email,
+      mobile,
+      password: hashedPassword,
+      confirmPassword: hashedPassword,
+      role: "user"
+    });
+    await newUsers.save();
 
-    const accessToken = generateAccessToken(user._id, "user");
-    const refreshToken = generateRefreshToken(user._id, "user");
+    const accessToken = generateAccessToken(newUsers._id, "User");
+    const refreshToken = generateRefreshToken(newUsers._id, "User");
 
     res.cookie("refreshToken", refreshToken, {
       httpOnly: true,
@@ -52,11 +92,10 @@ export const signupUser = async (req, res) => {
     res.status(201).json({
       message: "Account created successfully",
       accessToken,
-      user: {
-        id: user._id,
-        username: user.username,
-        name: user.name,
-        email: user.email,
+      newUsers: {
+        id: newUsers._id,
+        username: newUsers.username,
+        email: newUsers.email,
       },
     });
   } catch (error) {
@@ -67,34 +106,58 @@ export const signupUser = async (req, res) => {
   }
 };
 
-// POST /api/user/login
+// POST /api/User/login
 export const loginUser = async (req, res) => {
   try {
-    const { email, password } = req.body;
+    let { identifier, password } = req.body;
 
-    if (!email || !password) {
+    if (!identifier || !password) {
       return res
         .status(400)
         .json({ error: "Failed", message: "Email and password are required" });
     }
 
-    const user = await User.findOne({ email });
-    if (!user) {
+    // Normalize identifier
+    identifier = String(identifier).trim();
+
+    // Normalize mobile number
+    let mobileIdentifier = identifier.replace(/[\s-]/g, "");
+
+    if (/^\+91[6-9]\d{9}$/.test(mobileIdentifier)) {
+      mobileIdentifier = mobileIdentifier.slice(3);
+    } else if (/^91[6-9]\d{9}$/.test(mobileIdentifier)) {
+      mobileIdentifier = mobileIdentifier.slice(2);
+    }
+
+    // Find user
+
+    const Users = await User.findOne({ $or: [{ email: identifier }, { mobile: identifier }, { username: identifier }] });
+    if (!Users) {
       return res
         .status(401)
         .json({ error: "Failed", message: "Invalid credentials" });
     }
 
-    const isPasswordValid = await bcrypt.compare(password, user.password);
+    // Check suspended account
+    if (Users.status === "suspended") {
+      return res
+        .status(401)
+        .json({ error: "Failed", message: "Your account is suspended by admin" });
+    }
+
+    // Check password
+    const isPasswordValid = await bcrypt.compare(password, Users.password);
     if (!isPasswordValid) {
       return res
         .status(401)
         .json({ error: "Failed", message: "Invalid credentials" });
     }
 
-    const accessToken = generateAccessToken(user._id, "user");
-    const refreshToken = generateRefreshToken(user._id, "user");
+    // Generate tokens
+    const accessToken = generateAccessToken(Users._id, "User");
+    const refreshToken = generateRefreshToken(Users._id, "User");
 
+    // Refresh token cookie
     res.cookie("refreshToken", refreshToken, {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
@@ -102,15 +165,17 @@ export const loginUser = async (req, res) => {
       path: "/",
       maxAge: 7 * 24 * 60 * 60 * 1000,
     });
-
+    // Login response
     res.status(200).json({
       message: "Login Successful",
       accessToken,
-      user: {
-        id: user._id,
-        username: user.username,
-        name: user.name,
-        email: user.email,
+      Users: {
+        id: Users._id,
+        username: Users.username,
+        name: Users.name,
+        email: Users.email,
+        mobile: Users.mobile,
+        role: Users.role,
       },
     });
   } catch (error) {
@@ -121,7 +186,7 @@ export const loginUser = async (req, res) => {
   }
 };
 
-// POST /api/user/refresh
+// POST /api/User/refresh
 export const refreshUserToken = async (req, res) => {
   try {
     const refreshToken = req.cookies.refreshToken;
@@ -132,30 +197,30 @@ export const refreshUserToken = async (req, res) => {
     }
 
     const decoded = jwt.verify(refreshToken, process.env.REFRESH_TOKEN);
-    if (decoded.role !== "user") {
+    if (decoded.role !== "User") {
       return res
         .status(401)
         .json({ error: "Failed", message: "Invalid or expired refresh token" });
     }
 
-    const newAccessToken = generateAccessToken(decoded.id, "user");
+    const newAccessToken = generateAccessToken(decoded.id, "User");
 
-    let userObj = undefined;
+    let UserObj = undefined;
     try {
-      const user = await User.findById(decoded.id).select("-password");
-      if (user) {
-        userObj = {
-          id: user._id,
-          username: user.username,
-          name: user.name,
-          email: user.email,
+      const Users = await User.findById(decoded.id).select("-password");
+      if (Users) {
+        UserObj = {
+          id: Users._id,
+          username: Users.username,
+          name: Users.name,
+          email: Users.email,
         };
       }
     } catch (e) {
       // Ignore DB lookup error for token refresh
     }
 
-    return res.status(200).json({ accessToken: newAccessToken, user: userObj });
+    return res.status(200).json({ accessToken: newAccessToken, Users: UserObj });
   } catch (error) {
     return res
       .status(401)
@@ -163,7 +228,7 @@ export const refreshUserToken = async (req, res) => {
   }
 };
 
-// POST /api/user/logout
+// POST /api/User/logout
 export const logoutUser = async (req, res) => {
   try {
     res.clearCookie("refreshToken", {
@@ -179,23 +244,23 @@ export const logoutUser = async (req, res) => {
   }
 };
 
-// GET /api/user/profile
-// Protected — get current user profile
+// GET /api/User/profile
+// Protected — get current User profile
 export const getUserProfile = async (req, res) => {
   try {
-    const user = await User.findById(req.user.id).select("-password");
-    if (!user) {
+    const Users = await User.findById(req.Users.id).select("-password");
+    if (!Users) {
       return res
         .status(404)
         .json({ error: "Not Found", message: "User not found" });
     }
     res.status(200).json({
-      user: {
-        id: user._id,
-        username: user.username,
-        name: user.name,
-        email: user.email,
-        createdAt: user.createdAt,
+      Users: {
+        id: Users._id,
+        username: Users.username,
+        name: Users.name,
+        email: Users.email,
+        createdAt: Users.createdAt,
       },
     });
   } catch (error) {
@@ -206,8 +271,8 @@ export const getUserProfile = async (req, res) => {
   }
 };
 
-// PUT /api/user/profile
-// Protected — update user display name
+// PUT /api/User/profile
+// Protected — update User display name
 export const updateUserProfile = async (req, res) => {
   try {
     const { name } = req.body;
@@ -221,33 +286,33 @@ export const updateUserProfile = async (req, res) => {
     const updates = {};
     if (name !== undefined) updates.name = name.trim();
 
-    const user = await User.findByIdAndUpdate(
-      req.user.id,
+    const Users = await User.findByIdAndUpdate(
+      req.Users.id,
       { $set: updates },
       { new: true, runValidators: true }
     ).select("-password");
 
-    if (!user) {
+    if (!Users) {
       return res
         .status(404)
         .json({ error: "Not Found", message: "User not found" });
     }
 
-    // Sync updated authorName across all recipes authored by this user
+    // Sync updated authorName across all recipes authored by this User
     const updatedAuthorName =
-      user.name && user.name.trim() ? user.name.trim() : user.username;
+      Users.name && Users.name.trim() ? Users.name.trim() : Users.username;
     await Recipe.updateMany(
-      { author: user._id },
+      { author: Users._id },
       { $set: { authorName: updatedAuthorName } }
     );
 
     res.status(200).json({
       message: "Profile updated successfully",
-      user: {
-        id: user._id,
-        username: user.username,
-        name: user.name,
-        email: user.email,
+      Users: {
+        id: Users._id,
+        username: Users.username,
+        name: Users.name,
+        email: Users.email,
       },
     });
   } catch (error) {
@@ -258,14 +323,14 @@ export const updateUserProfile = async (req, res) => {
   }
 };
 
-// GET /api/user/commented-posts
-// Protected — get all recipes the user has commented on
+// GET /api/User/commented-posts
+// Protected — get all recipes the User has commented on
 export const getCommentedPosts = async (req, res) => {
   try {
-    const userId = req.user.id;
+    const UserId = req.User.id;
 
-    // Find distinct recipe IDs from user's comments
-    const recipeIds = await Comment.find({ user: userId }).distinct("recipe");
+    // Find distinct recipe IDs from User's comments
+    const recipeIds = await Comment.find({ User: UserId }).distinct("recipe");
 
     // Fetch those recipes
     const recipes = await Recipe.find({
@@ -282,12 +347,12 @@ export const getCommentedPosts = async (req, res) => {
   }
 };
 
-// GET /api/user/my-posts
-// Protected — get all recipes created by the current logged-in user
+// GET /api/User/my-posts
+// Protected — get all recipes created by the current logged-in User
 export const getMyPosts = async (req, res) => {
   try {
-    const userId = req.user.id;
-    const recipes = await Recipe.find({ author: userId })
+    const UserId = req.User.id;
+    const recipes = await Recipe.find({ author: UserId })
       .sort({ createdAt: -1 })
       .select(
         "title slug description image authorName category createdAt published"
@@ -302,24 +367,24 @@ export const getMyPosts = async (req, res) => {
   }
 };
 
-// GET /api/user/search?q=query
-// Public — search users by username or display name
+// GET /api/User/search?q=query
+// Public — search Users by username or display name
 export const searchUsers = async (req, res) => {
   try {
     const { q } = req.query;
 
     if (!q || !q.trim()) {
-      return res.status(200).json({ users: [] });
+      return res.status(200).json({ Users: [] });
     }
 
     const queryRegex = new RegExp(q.trim(), "i");
-    const users = await User.find({
+    const Users = await User.find({
       $or: [{ username: queryRegex }, { name: queryRegex }],
     })
       .select("username name createdAt")
       .limit(20);
 
-    res.status(200).json({ users });
+    res.status(200).json({ Users });
   } catch (error) {
     console.error("searchUsers error:", error);
     res
@@ -328,25 +393,25 @@ export const searchUsers = async (req, res) => {
   }
 };
 
-// GET /api/user/public/:username
-// Public — get public user details and published posts (excludes comments)
+// GET /api/User/public/:username
+// Public — get public User details and published posts (excludes comments)
 export const getPublicUserProfile = async (req, res) => {
   try {
     const { username } = req.params;
 
-    const user = await User.findOne({
+    const Users = await User.findOne({
       username: { $regex: `^${username.trim()}$`, $options: "i" },
     }).select("username name createdAt");
 
-    if (!user) {
+    if (!Users) {
       return res
         .status(404)
         .json({ error: "Not Found", message: "User not found" });
     }
 
-    // Fetch published recipes created by this user
+    // Fetch published recipes created by this User
     const recipes = await Recipe.find({
-      author: user._id,
+      author: Users._id,
       published: true,
     })
       .sort({ createdAt: -1 })
@@ -355,11 +420,11 @@ export const getPublicUserProfile = async (req, res) => {
       );
 
     res.status(200).json({
-      user: {
-        id: user._id,
-        username: user.username,
-        name: user.name,
-        createdAt: user.createdAt,
+      Users: {
+        id: Users._id,
+        username: Users.username,
+        name: Users.name,
+        createdAt: Users.createdAt,
       },
       recipes,
     });

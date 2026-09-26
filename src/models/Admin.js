@@ -6,20 +6,26 @@ const adminSchema = new mongoose.Schema(
       type: String,
       required: [true, "Username is required"],
       unique: true,
-      trim: true,
-      minlength: [2, "Username must be at least 2 characters long"],
     },
     email: {
       type: String,
       required: [true, "Email is required"],
       unique: true,
       lowercase: true,
-      match: [/^\S+@\S+\.\S+$/, "Please provide a valid email address"],
+    },
+
+    mobile:{
+      type: String,
+      required : true,
+      unique: true,
     },
     password: {
       type: String,
       required: [true, "Password is required"],
-      minlength: [8, "Password must be at least 8 characters long"],
+    },
+    confirmPassword: {
+      type: String,
+      required: [true, "Password is required"],
     },
   },
   {
@@ -27,4 +33,6 @@ const adminSchema = new mongoose.Schema(
   }
 );
 
-export const Admin = mongoose.model("Admin", adminSchema);
+const Admin = mongoose.model("Admin", adminSchema);
+
+export default Admin

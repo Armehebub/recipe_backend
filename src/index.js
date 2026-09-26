@@ -9,7 +9,6 @@ import connectDB from "./config/db.js";
 import adminRouter from "./routes/adminRoutes.js";
 import userRouter from "./routes/userRoutes.js";
 import recipeRouter from "./routes/recipeRoutes.js";
-
 import uploadRouter from "./routes/uploadRoutes.js";
 
 const app = express();
@@ -21,21 +20,60 @@ connectDB();
 const allowedOrigins = process.env.CORS_ORIGIN
   ? process.env.CORS_ORIGIN.split(",").map((origin) => origin.trim()).filter(Boolean)
   : [];
+// app.use(
+//   cors({
+//     origin: (origin, callback) => {
+//       if (!origin) return callback(null, true);
+//       if (
+//         allowedOrigins.includes(origin) ||
+//         allowedOrigins.includes("*") ||
+//         (allowedOrigins.length === 0 && /^http:\/\/(localhost|127\.0\.0\.1):\d+$/.test(origin))
+//       ) {
+//         callback(null, true);
+//       } else {
+//         callback(new Error("Not allowed by CORS"));
+//       }
+//     },
+//     credentials: true,
+//   })
+// );
+
+if (process.env.CORS_ORIGIN) {
+  const envOrigins = process.env.CORS_ORIGIN
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+
+  allowedOrigins.push(...envOrigins);
+}
+
+if (process.env.CLIENT_URL) {
+  allowedOrigins.push(process.env.CLIENT_URL.trim());
+}
+
+// Remove duplicate origins
+const uniqueOrigins = [...new Set(allowedOrigins)];
+
+console.log("Allowed CORS Origins:", uniqueOrigins);
 
 app.use(
   cors({
     origin: (origin, callback) => {
-      if (!origin) return callback(null, true);
-      if (
-        allowedOrigins.includes(origin) ||
-        allowedOrigins.includes("*") ||
-        (allowedOrigins.length === 0 && /^http:\/\/(localhost|127\.0\.0\.1):\d+$/.test(origin))
-      ) {
-        callback(null, true);
-      } else {
-        callback(new Error("Not allowed by CORS"));
+      // Allow requests without Origin
+      // Example: Postman, server-to-server requests
+      if (!origin) {
+        return callback(null, true);
       }
+
+      if (uniqueOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+
+      console.log("Blocked CORS Origin:", origin);
+
+      return callback(new Error("Not allowed by CORS"));
     },
+
     credentials: true,
   })
 );

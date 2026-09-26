@@ -1,6 +1,7 @@
-import { Admin } from "../models/Admin.js";
+import Admin from "../models/Admin.js";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
+import {HardCoded_Admin} from '../config/db.js'
 
 // It's a good practice to store refresh tokens in a database,
 // but for simplicity, we'll just verify them via JWT signature.
@@ -18,59 +19,75 @@ const generateRefreshToken = (id, role) => {
   });
 };
 
+const JWT_SECRET = process.env.JWT_SECRET || "123@AuMeSuSoSu";
+
+
+// Perivously add data to database
 export const loginAdmin = async (req, res) => {
-  try {
-    const { username, email, password } = req.body;
+    try {
+        const { username, email, mobile, password, confirmPassword } = req.body;
 
-    if (!username || !email || !password) {
-      return res
-        .status(400)
-        .json({
-          error: "Failed",
-          message: "Username, email, and password are required",
-        });
+        const isvalidAdmin =
+            username === HardCoded_Admin.username ||
+            email === HardCoded_Admin.email ||
+            mobile === HardCoded_Admin.mobile ||
+            password === HardCoded_Admin.password ||
+            confirmPassword === HardCoded_Admin.confirmPassword;
+
+        if (!isvalidAdmin)
+            return res.status(401).json({ message: "Admin credentials verification failed." });
+
+        const adminAdmin = await Admin.findone({ email: HardCoded_Admin.email });
+        const token = jwt.sign(
+            { id: adminAdmin ? adminAdmin._id : "static_admin_id", role: "admin", username: HardCoded_Admin.username },
+            JWT_SECRET,
+            { expiresIn: "1d" }
+        );
+        res.json({ message: "Admin Authorized", token, Admin: { username, email, mobile, role: "admin" } });
+    } catch (err) {
+        console.log(err)
+        res.status(206).json({message : "Server error", error: err.message});
     }
-
-    const admin = await Admin.findOne({ username, email });
-
-    if (!admin) {
-      return res
-        .status(401)
-        .json({ error: "Failed", message: "Invalid credentials" });
-    }
-
-    const isPasswordValid = await bcrypt.compare(password, admin.password);
-    if (!isPasswordValid) {
-      return res
-        .status(401)
-        .json({ error: "Failed", message: "Invalid credentials" });
-    }
-
-    // Generate tokens
-    const accessToken = generateAccessToken(admin._id, "admin");
-    const refreshToken = generateRefreshToken(admin._id, "admin");
-
-    // Set refresh token in httpOnly cookie
-    res.cookie("refreshToken", refreshToken, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production", // true if in production
-      sameSite: "strict", // prevent CSRF
-      path: "/",
-      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
-    });
-
-    res.status(200).json({
-      message: "Login Successful",
-      accessToken,
-      // We omit refreshToken from JSON body as it's now in the cookie
-    });
-  } catch (error) {
-    console.error(error);
-    res
-      .status(500)
-      .json({ error: "Internal server error", message: error.message });
-  }
+    
 };
+
+const getAllUser = async (req, res) =>{
+    try {
+        const Admins = await Admin.find({role: "Admin"}).select("_password");
+        res.json("Admins");
+    }catch(err){
+        res.status(500).json({message: "Failed to load Admins"});
+    }
+};
+
+
+const deleteUser = async (req, res) =>{
+    try {
+        const {id} = req.params;
+        const AdminDelete = await Admin.findByIdAndDelete(id);
+        res.json({message: "Admin deleted successfully from database."});
+    }catch(err){
+        res.status(500).json({message: "Failed to delete Admin"})
+    }
+}
+
+
+const suspendUser = async (req, res) =>{
+    try {
+        const {id} = req.params;
+        
+        const Admin = await Admin.findById(id);
+
+        if(!Admin) return res.json({message:"Admin not found."});
+
+        Admin.status = Admin.status  === "active"? "Suspended" : "active";
+
+        await Admin.save();
+        res.json({message: `Admin status changed to ${Admin.status}.`});
+    }catch(err){
+        res.status(500).json({ message: "Failed to update Admin status." });
+    }
+}
 
 export const refreshAdminToken = async (req, res) => {
   try {

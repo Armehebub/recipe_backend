@@ -1,6 +1,6 @@
 import { Recipe } from "../models/Recipe.js";
 import { Comment } from "../models/Comment.js";
-import { User } from "../models/User.js";
+import  User  from "../models/User.js";
 
 // GET /api/recipes
 // Public — list all published recipes, optional ?search= query
